@@ -8,7 +8,6 @@ class PanGenerationTest {
 	fun `generates unique 16-digit pan starting with 4000 and retries on collision`() {
 		var calls = 0
 		val random = { n: Int ->
-			// produce deterministic digits so first attempt collides, second is unique
 			calls += 1
 			if (calls == 1) "111111111111" else "222222222222"
 		}
