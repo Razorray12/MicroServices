@@ -3,8 +3,10 @@ package com.example.users
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.junit.jupiter.api.*
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -38,6 +40,20 @@ class UsersDbIntegrationTest {
 			transaction {
 				exec("CREATE SCHEMA IF NOT EXISTS users")
 				SchemaUtils.create(UsersTable)
+				exec(
+					"""
+					DO $$
+					BEGIN
+					    IF NOT EXISTS (
+					        SELECT 1 FROM information_schema.table_constraints
+					        WHERE table_schema='users' AND table_name='users' AND constraint_name='users_role_check'
+					    ) THEN
+					        ALTER TABLE users.users
+					        ADD CONSTRAINT users_role_check CHECK (role IN ('USER','ADMIN'));
+					    END IF;
+					END$$;
+					""".trimIndent()
+				)
 			}
 		}
 
@@ -85,6 +101,44 @@ class UsersDbIntegrationTest {
 				}
 			}
 		}
+	}
+
+	@Test
+	fun `role check constraint rejects invalid role`() {
+		Assertions.assertThrows(Exception::class.java) {
+			transaction {
+				UsersTable.insert {
+					it[id] = UUID.randomUUID()
+					it[email] = "r@ex.com"
+					it[passwordHash] = "hash"
+					it[fullName] = "User"
+					it[role] = "GUEST"
+				}
+			}
+		}
+	}
+
+	@Test
+	fun `update full name keeps createdAt`() {
+		val id = UUID.randomUUID()
+		val createdAt = transaction {
+			UsersTable.insert {
+				it[UsersTable.id] = id
+				it[email] = "upd@ex.com"
+				it[passwordHash] = "h"
+				it[fullName] = "Name1"
+				it[role] = "USER"
+			}
+			UsersTable.slice(UsersTable.createdAt).select { UsersTable.id eq id }.first()[UsersTable.createdAt]
+		}
+		transaction {
+			UsersTable.update({ UsersTable.id eq id }) {
+				it[fullName] = "Name2"
+			}
+		}
+		val row = transaction { UsersTable.select { UsersTable.id eq id }.first() }
+		org.junit.jupiter.api.Assertions.assertEquals("Name2", row[UsersTable.fullName])
+		org.junit.jupiter.api.Assertions.assertEquals(createdAt, row[UsersTable.createdAt])
 	}
 }
 

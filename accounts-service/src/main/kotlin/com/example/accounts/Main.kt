@@ -220,13 +220,10 @@ class CardService(private val rabbitChannel: Channel) {
         }
 
         fun generatePan(): String {
-            // Simple PAN generator: 16 digits starting with 4000, Luhn not enforced here
             fun randomDigits(n: Int): String = (1..n).joinToString("") { secureRandom.nextInt(10).toString() }
-            var pan: String
-            do {
-                pan = "4000" + randomDigits(12)
-            } while (transaction { CardsTable.select { CardsTable.pan eq pan }.any() })
-            return pan
+            return generateUniquePan({ randomDigits(it) }) { candidate ->
+                transaction { CardsTable.select { CardsTable.pan eq candidate }.any() }
+            }
         }
 
         fun saveCard(pan: String): UUID {
@@ -266,6 +263,15 @@ class CardService(private val rabbitChannel: Channel) {
 
         return CardResponse(cardId.toString(), pan, holder, "ISSUED")
     }
+}
+
+// Pure function extracted for unit testing: generates 16-digit PAN starting with 4000
+fun generateUniquePan(randomDigits: (Int) -> String, existsPan: (String) -> Boolean): String {
+    var pan: String
+    do {
+        pan = "4000" + randomDigits(12)
+    } while (existsPan(pan))
+    return pan
 }
 
 private fun hikari(dbUrl: String, dbUser: String, dbPassword: String): HikariDataSource {

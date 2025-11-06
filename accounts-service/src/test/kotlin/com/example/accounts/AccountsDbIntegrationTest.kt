@@ -3,8 +3,10 @@ package com.example.accounts
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.junit.jupiter.api.*
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -39,6 +41,32 @@ class AccountsDbIntegrationTest {
 			transaction {
 				exec("CREATE SCHEMA IF NOT EXISTS accounts")
 				SchemaUtils.create(AccountsTable, CardsTable)
+				exec(
+					"""
+					DO $$
+					BEGIN
+					    IF NOT EXISTS (
+					        SELECT 1 FROM information_schema.table_constraints
+					        WHERE table_schema='accounts' AND table_name='accounts' AND constraint_name='accounts_status_check'
+					    ) THEN
+					        ALTER TABLE accounts.accounts ADD CONSTRAINT accounts_status_check CHECK (status IN ('ACTIVE','CLOSED'));
+					    END IF;
+					END$$;
+					""".trimIndent()
+				)
+				exec(
+					"""
+					DO $$
+					BEGIN
+					    IF NOT EXISTS (
+					        SELECT 1 FROM information_schema.table_constraints
+					        WHERE table_schema='accounts' AND table_name='cards' AND constraint_name='cards_status_check'
+					    ) THEN
+					        ALTER TABLE accounts.cards ADD CONSTRAINT cards_status_check CHECK (status IN ('ISSUED','DELETED'));
+					    END IF;
+					END$$;
+					""".trimIndent()
+				)
 			}
 		}
 
@@ -109,6 +137,84 @@ class AccountsDbIntegrationTest {
 				}
 			}
 		}
+	}
+
+	@Test
+	fun `card insert with non-existing account fails due to FK`() {
+		Assertions.assertThrows(Exception::class.java) {
+			transaction {
+				CardsTable.insert {
+					it[id] = UUID.randomUUID()
+					it[CardsTable.accountId] = UUID.randomUUID()
+					it[pan] = "4000123499999999"
+					it[holder] = "X"
+					it[status] = "ISSUED"
+				}
+			}
+		}
+	}
+
+	@Test
+	fun `check constraint rejects invalid statuses`() {
+		Assertions.assertThrows(Exception::class.java) {
+			transaction {
+				AccountsTable.insert {
+					it[id] = UUID.randomUUID()
+					it[ownerIdCol] = UUID.randomUUID()
+					it[currency] = "USD"
+					it[balance] = BigDecimal("0.00")
+					it[status] = "FROZEN"
+				}
+			}
+		}
+		Assertions.assertThrows(Exception::class.java) {
+			transaction {
+				val accountId = UUID.randomUUID()
+				AccountsTable.insert {
+					it[id] = accountId
+					it[ownerIdCol] = UUID.randomUUID()
+					it[currency] = "USD"
+					it[balance] = BigDecimal("0.00")
+					it[status] = "ACTIVE"
+				}
+				CardsTable.insert {
+					it[id] = UUID.randomUUID()
+					it[CardsTable.accountId] = accountId
+					it[pan] = "4000123400000000"
+					it[holder] = "Y"
+					it[status] = "BLOCKED"
+				}
+			}
+		}
+	}
+
+	@Test
+	fun `delete card updates status to DELETED`() {
+		val accountId = UUID.randomUUID()
+		val cardId = UUID.randomUUID()
+		transaction {
+			AccountsTable.insert {
+				it[id] = accountId
+				it[ownerIdCol] = UUID.randomUUID()
+				it[currency] = "USD"
+				it[balance] = BigDecimal("0.00")
+				it[status] = "ACTIVE"
+			}
+			CardsTable.insert {
+				it[id] = cardId
+				it[CardsTable.accountId] = accountId
+				it[pan] = "4000123499990000"
+				it[holder] = "Z"
+				it[status] = "ISSUED"
+			}
+		}
+		transaction {
+			CardsTable.update({ CardsTable.id eq cardId }) {
+				it[status] = "DELETED"
+			}
+		}
+		val row = transaction { CardsTable.select { CardsTable.id eq cardId }.first() }
+		assertEquals("DELETED", row[CardsTable.status])
 	}
 }
 

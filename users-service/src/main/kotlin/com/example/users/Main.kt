@@ -81,7 +81,7 @@ fun Application.module() {
                         return@post
                     }
                     val userId = UUID.randomUUID()
-                    val passwordHash = BCrypt.withDefaults().hashToString(12, body.password.toCharArray())
+                    val passwordHash = hashPassword(body.password)
                     val createdAt = transaction {
                         UsersTable.insert {
                             it[id] = userId
@@ -121,18 +121,14 @@ fun Application.module() {
                         call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid credentials"))
                         return@post
                     }
-                    val verified = BCrypt.verifyer().verify(body.password.toCharArray(), row[UsersTable.passwordHash]).verified
+                    val verified = verifyPassword(body.password, row[UsersTable.passwordHash])
                     if (!verified) {
                         call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid credentials"))
                         return@post
                     }
                     val userId = row[UsersTable.id].value
                     val role = row[UsersTable.role]
-                    val token = JWT.create()
-                        .withSubject(userId.toString())
-                        .withClaim("role", role)
-                        .withExpiresAt(Date.from(Instant.now().plusSeconds(3600)))
-                        .sign(Algorithm.HMAC256(jwtSecret))
+                    val token = createToken(userId.toString(), role, jwtSecret, 3600)
 
                     call.respond(TokenResponse(access_token = token))
                 }
@@ -164,6 +160,17 @@ fun Application.module() {
 }
 
 fun normalizeEmail(raw: String): String = raw.trim().lowercase()
+
+fun hashPassword(password: String): String = BCrypt.withDefaults().hashToString(12, password.toCharArray())
+
+fun verifyPassword(password: String, hash: String): Boolean = BCrypt.verifyer().verify(password.toCharArray(), hash).verified
+
+fun createToken(subject: String, role: String, secret: String, ttlSeconds: Long): String =
+    JWT.create()
+        .withSubject(subject)
+        .withClaim("role", role)
+        .withExpiresAt(Date.from(Instant.now().plusSeconds(ttlSeconds)))
+        .sign(Algorithm.HMAC256(secret))
 
 private fun hikari(dbUrl: String, dbUser: String, dbPassword: String): HikariDataSource {
     val config = HikariConfig().apply {
