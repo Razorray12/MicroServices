@@ -68,8 +68,8 @@ fun Application.module() {
         route("/api") {
             route("/auth") {
                 post("/register") {
-                    val body = call.receive<RegisterRequest>()
-                    val email = body.email.trim().lowercase()
+	                    val body = call.receive<RegisterRequest>()
+	                    val email = normalizeEmail(body.email)
                     val fullName = body.fullName.trim()
                     if (email.isBlank() || body.password.isBlank() || fullName.isBlank()) {
                         call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid input"))
@@ -115,7 +115,7 @@ fun Application.module() {
 
                 post("/login") {
                     val body = call.receive<LoginRequest>()
-                    val email = body.email.trim().lowercase()
+	                    val email = normalizeEmail(body.email)
                     val row = transaction { UsersTable.select { UsersTable.email eq email }.firstOrNull() }
                     if (row == null) {
                         call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid credentials"))
@@ -137,7 +137,6 @@ fun Application.module() {
                     call.respond(TokenResponse(access_token = token))
                 }
             }
-
             authenticate("auth-jwt") {
                 get("/users/me") {
                     val principal = call.principal<JWTPrincipal>() ?: run {
@@ -163,6 +162,8 @@ fun Application.module() {
         }
     }
 }
+
+fun normalizeEmail(raw: String): String = raw.trim().lowercase()
 
 private fun hikari(dbUrl: String, dbUser: String, dbPassword: String): HikariDataSource {
     val config = HikariConfig().apply {

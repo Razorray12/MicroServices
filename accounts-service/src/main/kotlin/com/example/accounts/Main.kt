@@ -71,12 +71,13 @@ fun Application.module() {
                 post("/accounts") {
                     val principal = call.principal<JWTPrincipal>()!!
                     val ownerId = UUID.fromString(principal.payload.subject!!)
-                    val req = call.receive<OpenAccountRequest>()
-                    val currency = req.currency.trim().uppercase()
-                    if (currency.length != 3) {
+					val req = call.receive<OpenAccountRequest>()
+					val currencyRaw = req.currency.trim()
+					if (!isValidCurrencyCode(currencyRaw)) {
                         call.respond(HttpStatusCode.BadRequest, mapOf("error" to "currency must be 3-letter code"))
                         return@post
                     }
+					val currency = currencyRaw.uppercase()
                     val accountId = UUID.randomUUID()
                     transaction {
                         AccountsTable.insert {
@@ -196,6 +197,12 @@ fun Application.module() {
             }
         }
     }
+}
+
+fun isValidCurrencyCode(input: String): Boolean {
+	val trimmed = input.trim()
+	if (trimmed.length != 3) return false
+	return trimmed.all { it in 'A'..'Z' || it in 'a'..'z' }
 }
 
 class CardService(private val rabbitChannel: Channel) {
